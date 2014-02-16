@@ -23,9 +23,8 @@ instance System Term where
     isValue TTrue = True
     isValue TFalse = True
     isValue TZero = True
-    isValue (TSucc t) = isIntValue t
-    isValue (TPred t) = isIntValue t
-    isValue (TIsZero t) = False
+    isValue t@(TSucc _) = isIntValue t
+    isValue t@(TPred _) = isIntValue t
     isValue (TAbs _) = True
     isValue _ = False
     evalStep (TIf TTrue t _) = t

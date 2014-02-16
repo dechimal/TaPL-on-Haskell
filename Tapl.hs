@@ -44,8 +44,9 @@ instance System Term where
     evalStep (TPred (TSucc n)) | isIntValue n = n
     evalStep (TSucc n) | not $ isIntValue n = TSucc $ evalStep n
     evalStep (TPred n) | not $ isIntValue n = TPred $ evalStep n
-    evalStep (TApply t1@(TAbs t') t2) | not $ isValue t2 = TApply t1 $ evalStep t2
-                                      | otherwise = substitute t' t2
+    evalStep (TApply t1 t2) | not $ isValue t1 = TApply (evalStep t1) t2
+                            | not $ isValue t2 = TApply t1 $ evalStep t2
+                            | otherwise = case t1 of (TAbs t') -> substitute t' t2
 
 isIntValue :: Term -> Bool
 isIntValue TZero = True
@@ -64,13 +65,14 @@ substitute t1 t2 = subst' t1 t2 1
           subst' (TIsZero n) t2 i = TIsZero $ subst' n t2 i
           subst' (TAbs t) t2 i = TAbs $ subst' t t2 $ i + 1
           subst' (TApply t3 t4) t2 i = TApply (subst' t3 t2 i) (subst' t4 t2 i)
+          subst' t1 _ _ = t1
 
 test :: (Eq a, Show a) => a -> a -> IO ()
 test actual expected = if actual == expected
                        then return ()
-                       else error $ concat [ "failed Expected: "
+                       else error $ concat [ "failed\nExpected: "
                                            , show expected
-                                           , "\n         Actual: "
+                                           , "\nActual: "
                                            , show actual]
 
 main :: IO ()
@@ -78,6 +80,7 @@ main = forM_ (zipWith (\x y->(x, x:y)) term expected) $ \(x, y) -> test (evalPro
     where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
                        (TSucc $ TSucc $ TPred TZero) $
                        TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                 , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
                  ]
           expected = [ [ TIf (TIf TFalse TTrue TFalse)
                              (TSucc $ TSucc $ TPred TZero) $
@@ -89,4 +92,18 @@ main = forM_ (zipWith (\x y->(x, x:y)) term expected) $ \(x, y) -> test (evalPro
                        , TSucc $ TPred TZero
                        , TZero
                        ]
+                     , [ TApply (TApply (TAbs $ TAbs $ TApply (TApply t $ TIndex 2) $ TIndex 1) TTrue) $ TPred $ TSucc TZero
+                       , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 1) $ TPred $ TSucc TZero
+                       , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 1) $ TZero
+                       , TApply (TApply t TTrue) TZero
+                       , TApply (TAbs TTrue) TZero
+                       , TTrue
+                       ]
                      ]
+
+t = TAbs $ TAbs $ TIndex 2
+f = TAbs $ TAbs $ TIndex 1
+tst = TAbs
+      $ TAbs
+      $ TAbs
+      $ TApply (TApply (TIndex 3) $ TIndex 2) $ TIndex 1

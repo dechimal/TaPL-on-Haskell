@@ -8,6 +8,13 @@ class System t where
 eval :: System t => t -> t
 eval t = if isValue t then t else eval $ evalStep t
 
+evalProgress :: System t => t -> [t]
+evalProgress t = (flip unfoldr) (Just t)
+                 $ fmap
+                 $ \t'->(t', if isValue t'
+                             then Nothing
+                             else Just $ evalStep t')
+
 data Term = TTrue
           | TFalse
           | TIf Term Term Term
@@ -18,7 +25,7 @@ data Term = TTrue
           | TAbs Term
           | TIndex Int
           | TApply Term Term
-            deriving (Show)
+            deriving (Show,Eq)
 instance System Term where
     isValue TTrue = True
     isValue TFalse = True
@@ -58,10 +65,28 @@ substitute t1 t2 = subst' t1 t2 1
           subst' (TAbs t) t2 i = TAbs $ subst' t t2 $ i + 1
           subst' (TApply t3 t4) t2 i = TApply (subst' t3 t2 i) (subst' t4 t2 i)
 
+test :: (Eq a, Show a) => a -> a -> IO ()
+test actual expected = if actual == expected
+                       then return ()
+                       else error $ concat [ "failed Expected: "
+                                           , show expected
+                                           , "\n         Actual: "
+                                           , show actual]
+
 main :: IO ()
-main = mapM_ print $ (flip unfoldr) (Just term) $ fmap $ \t->(t, if isValue t
-                                                                 then Nothing
-                                                                 else Just $ evalStep t)
-    where term = TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
-                     (TSucc $ TSucc $ TPred TZero) $
-                     TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+main = forM_ (zipWith (\x y->(x, x:y)) term expected) $ \(x, y) -> test (evalProgress x) y
+    where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
+                       (TSucc $ TSucc $ TPred TZero) $
+                       TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                 ]
+          expected = [ [ TIf (TIf TFalse TTrue TFalse)
+                             (TSucc $ TSucc $ TPred TZero) $
+                             TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                       , TIf TFalse
+                             (TSucc $ TSucc $ TPred TZero) $
+                             TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                       , TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                       , TSucc $ TPred TZero
+                       , TZero
+                       ]
+                     ]

@@ -4,6 +4,7 @@ class System t where
     isValue :: t -> Bool
     evalStep :: t -> Maybe t
 
+
 evalProgress :: System t => t -> (Bool, [t])
 evalProgress t = f t
     where f t = if isValue t
@@ -22,7 +23,7 @@ data Term = TTrue
           | TAbs Term
           | TIndex Int
           | TApply Term Term
-            deriving (Show,Eq)
+            deriving (Show, Eq)
 
 instance System Term where
     isValue TTrue = True
@@ -56,7 +57,7 @@ isIntValue (TPred t@(TPred _)) = isIntValue $ t
 isIntValue _ = False
 
 substitute :: Term -> Term -> Term
-substitute t1 t2 = subst' t1 t2 1
+substitute t1 t2 = subst' t1 t2 0
     where subst' (TIndex j) t2 i | j == i = t2
           subst' (TIf c t f) t2 i = TIf (subst' c t2 i) (subst' t t2 i) (subst' f t2 i)
           subst' (TSucc n) t2 i = TSucc $ subst' n t2 i
@@ -79,33 +80,34 @@ main :: IO ()
 main = sequence_ $ zipWith test (map evalProgress term) expected
     where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
                        (TSucc $ TSucc $ TPred TZero) $
-                       TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                       TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero
+                 , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
                  , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
                  ]
           expected = [ (True,
                         [ TIf (TIf TFalse TTrue TFalse)
                               (TSucc $ TSucc $ TPred TZero) $
-                              TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                              TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero
                         , TIf TFalse
                               (TSucc $ TSucc $ TPred TZero) $
-                              TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
-                        , TApply (TAbs $ TSucc $ TIndex 1) $ TPred TZero
+                              TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero
+                        , TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero
                         , TSucc $ TPred TZero
                         , TZero
                         ])
                      , (True,
-                        [ TApply (TApply (TAbs $ TAbs $ TApply (TApply t $ TIndex 2) $ TIndex 1) TTrue) $ TPred $ TSucc TZero
-                        , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 1) $ TPred $ TSucc TZero
-                        , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 1) $ TZero
+                        [ TApply (TApply (TAbs $ TAbs $ TApply (TApply t $ TIndex 1) $ TIndex 0) TTrue) $ TPred $ TSucc TZero
+                        , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 0) $ TPred $ TSucc TZero
+                        , TApply (TAbs $ TApply (TApply t TTrue) $ TIndex 0) $ TZero
                         , TApply (TApply t TTrue) TZero
                         , TApply (TAbs TTrue) TZero
                         , TTrue
                         ])
                      ]
 
-t = TAbs $ TAbs $ TIndex 2
-f = TAbs $ TAbs $ TIndex 1
+t = TAbs $ TAbs $ TIndex 1
+f = TAbs $ TAbs $ TIndex 0
 tst = TAbs
       $ TAbs
       $ TAbs
-      $ TApply (TApply (TIndex 3) $ TIndex 2) $ TIndex 1
+      $ TApply (TApply (TIndex 2) $ TIndex 1) $ TIndex 0

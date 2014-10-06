@@ -45,7 +45,8 @@ instance System Term where
     evalStep (TPred n) | not $ isValue n = TPred <$> evalStep n
     evalStep (TApply t1 t2) | not $ isValue t1 = TApply <$> evalStep t1 <*> pure t2
                             | not $ isValue t2 = TApply t1 <$> evalStep t2
-                            | otherwise = case t1 of (TAbs t') -> Just $ substitute t' t2
+                            | (TAbs t') <- t1 = let t'' = substitute t' t2 0
+                                                in Just $ shift t'' 1 (-1)
     evalStep _ = Nothing
 
 isIntValue :: Term -> Bool
@@ -56,16 +57,25 @@ isIntValue (TSucc t@(TSucc _)) = isIntValue $ t
 isIntValue (TPred t@(TPred _)) = isIntValue $ t
 isIntValue _ = False
 
-substitute :: Term -> Term -> Term
-substitute t1 t2 = subst' t1 t2 0
-    where subst' (TIndex j) t2 i | j == i = t2
-          subst' (TIf c t f) t2 i = TIf (subst' c t2 i) (subst' t t2 i) (subst' f t2 i)
-          subst' (TSucc n) t2 i = TSucc $ subst' n t2 i
-          subst' (TPred n) t2 i = TPred $ subst' n t2 i
-          subst' (TIsZero n) t2 i = TIsZero $ subst' n t2 i
-          subst' (TAbs t) t2 i = TAbs $ subst' t t2 $ i + 1
-          subst' (TApply t3 t4) t2 i = TApply (subst' t3 t2 i) (subst' t4 t2 i)
-          subst' t1 _ _ = t1
+substitute :: Term -> Term -> Int -> Term
+substitute (TIndex j) t2 i | j == i = t2
+substitute (TAbs t) t2 i = TAbs $ substitute t (shift t2 1 1) (i+1)
+substitute (TIf c t f) t2 i = TIf (substitute c t2 i) (substitute t t2 i) (substitute f t2 i)
+substitute (TSucc n) t2 i = TSucc $ substitute n t2 i
+substitute (TPred n) t2 i = TPred $ substitute n t2 i
+substitute (TIsZero n) t2 i = TIsZero $ substitute n t2 i
+substitute (TApply t3 t4) t2 i = TApply (substitute t3 t2 i) (substitute t4 t2 i)
+substitute t1 _ _ = t1
+
+shift :: Term -> Int -> Int -> Term
+shift (TIndex j) i n | j >= i = TIndex $ j + n
+shift (TAbs t) i n = TAbs $ shift t (i + 1) n
+shift (TIf c t f) i n = TIf (shift c i n) (shift t i n) (shift f i n)
+shift (TSucc z) i n = TSucc $ shift z i n
+shift (TPred z) i n = TPred $ shift z i n
+shift (TIsZero z) i n = TIsZero $ shift z i n
+shift (TApply t1 t2) i n = TApply (shift t1 i n) (shift t2 i n)
+shift t _ _ = t
 
 test :: (Eq a, Show a) => a -> a -> IO ()
 test actual expected = if actual == expected
@@ -76,12 +86,29 @@ test actual expected = if actual == expected
                                            , show actual
                                            ]
 
-main :: IO ()
-main = sequence_ $ zipWith test (map evalProgress term) expected
+testSubstitute :: IO ()
+testSubstitute = test actual expected
+    where actual = substitute
+                       (TAbs (TApply (TApply (TApply v0 v1)
+                                             v2)
+                                     (TAbs (TApply (TApply v0 v1) v2))))
+                       (TAbs (TApply v2 v3))
+                       0
+          expected = (TAbs (TApply (TApply (TApply v0 (TAbs (TApply v3 v4)))
+                                           v2)
+                                   (TAbs (TApply (TApply v0 v1) (TAbs (TApply v4 v5))))))
+          v0 = TIndex 0
+          v1 = TIndex 1
+          v2 = TIndex 2
+          v3 = TIndex 3
+          v4 = TIndex 4
+          v5 = TIndex 5
+
+testEvalStep :: [IO ()]
+testEvalStep = zipWith test (map evalProgress term) expected
     where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
                        (TSucc $ TSucc $ TPred TZero) $
                        TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero
-                 , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
                  , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
                  ]
           expected = [ (True,
@@ -111,3 +138,9 @@ tst = TAbs
       $ TAbs
       $ TAbs
       $ TApply (TApply (TIndex 2) $ TIndex 1) $ TIndex 0
+
+tests :: [IO ()]
+tests = testSubstitute:testEvalStep
+
+main :: IO ()
+main = sequence_ $ tests

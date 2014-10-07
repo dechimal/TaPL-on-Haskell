@@ -5,13 +5,11 @@ class System t where
     evalStep :: t -> Maybe t
 
 
-evalProgress :: System t => t -> (Bool, [t])
-evalProgress t = f t
-    where f t = if isValue t
-                then (True, [])
-                else case evalStep t of
-                       Just t' -> let (b, ts) = evalProgress t' in (b, t':ts)
-                       Nothing -> (False, [])
+trace :: System t => t -> (Bool, [t])
+trace t | isValue t = (True, [])
+        | Just t' <- evalStep t = let (b, ts) = trace t'
+                                  in (b, t':ts)
+        | otherwise = (False, [])
 
 data Term = TTrue
           | TFalse
@@ -105,7 +103,7 @@ testSubstitute = test actual expected
           v5 = TIndex 5
 
 testEvalStep :: [IO ()]
-testEvalStep = zipWith test (map evalProgress term) expected
+testEvalStep = zipWith test (map trace term) expected
     where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
                        (TSucc $ TSucc $ TPred TZero) $
                        TApply (TAbs $ TSucc $ TIndex 0) $ TPred TZero

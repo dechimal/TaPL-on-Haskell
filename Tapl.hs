@@ -4,6 +4,9 @@ class System t where
     isValue :: t -> Bool
     evalStep :: t -> Maybe t
 
+eval :: System t => t -> Maybe t
+eval t | isValue t = Just t
+       | otherwise = evalStep t >>= eval
 
 trace :: System t => t -> (Bool, [t])
 trace t | isValue t = (True, [])

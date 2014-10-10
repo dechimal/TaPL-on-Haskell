@@ -1,5 +1,6 @@
 import Control.Applicative
 import Data.Maybe
+import Data.Foldable(for_)
 
 class System t where
     isValue :: t -> Bool
@@ -34,35 +35,35 @@ data Type = TyInt
             deriving (Show, Eq)
 
 instance System Term where
-    isValue TTrue = True
-    isValue TFalse = True
-    isValue TZero = True
-    isValue t@(TSucc {}) = isIntValue t
-    isValue t@(TPred {}) = isIntValue t
-    isValue (TAbs {}) = True
+    isValue TTrue {} = True
+    isValue TFalse {} = True
+    isValue TZero {} = True
+    isValue t@TSucc {} = isIntValue t
+    isValue t@TPred {} = isIntValue t
+    isValue TAbs {} = True
     isValue _ = False
-    evalStep (TIf { cond = TTrue, true = t }) = Just t
-    evalStep (TIf { cond = TFalse, false = t }) = Just t
-    evalStep (TIf { cond = c, true = t, false = f}) = TIf <$> evalStep c <*> pure t <*> pure f
-    evalStep (TIsZero { zero = TZero }) = Just TTrue
-    evalStep (TIsZero { zero = n }) | isIntValue n = Just TFalse
-                                    | otherwise = TIsZero <$> evalStep n
-    evalStep (TSucc { unsucc = (TPred { unpred = n })}) | isIntValue n = Just n
-    evalStep (TPred { unpred = (TSucc { unsucc = n })}) | isIntValue n = Just n
-    evalStep (TSucc { unsucc = n}) | not $ isValue n = TSucc <$> evalStep n
-    evalStep (TPred { unpred = n}) | not $ isValue n = TPred <$> evalStep n
-    evalStep (TApply { func = t1, arg = t2 }) | not $ isValue t1 = TApply <$> evalStep t1 <*> pure t2
-                                             | not $ isValue t2 = TApply t1 <$> evalStep t2
-                                             | (TAbs { body = t' }) <- t1 = let t'' = substitute t' t2 0
-                                                                            in Just $ shift t'' 1 (-1)
+    evalStep TIf { cond = TTrue, true = t } = Just t
+    evalStep TIf { cond = TFalse, false = t } = Just t
+    evalStep TIf { cond = c, true = t, false = f } = TIf <$> evalStep c <*> pure t <*> pure f
+    evalStep TIsZero { zero = TZero } = Just TTrue
+    evalStep TIsZero { zero = n } | isIntValue n = Just TFalse
+                                  | otherwise = TIsZero <$> evalStep n
+    evalStep TSucc { unsucc = TPred { unpred = n } } | isIntValue n = Just n
+    evalStep TPred { unpred = TSucc { unsucc = n } } | isIntValue n = Just n
+    evalStep TSucc { unsucc = n} | not $ isValue n = TSucc <$> evalStep n
+    evalStep TPred { unpred = n} | not $ isValue n = TPred <$> evalStep n
+    evalStep TApply { func = t1, arg = t2 } | not $ isValue t1 = TApply <$> evalStep t1 <*> pure t2
+                                            | not $ isValue t2 = TApply t1 <$> evalStep t2
+                                            | TAbs { body = t' } <- t1 = let t'' = substitute t' t2 0
+                                                                         in Just $ shift t'' 1 (-1)
     evalStep _ = Nothing
 
 isIntValue :: Term -> Bool
 isIntValue TZero = True
-isIntValue (TSucc TZero) = True
-isIntValue (TPred TZero) = True
-isIntValue (TSucc t@(TSucc _)) = isIntValue $ t
-isIntValue (TPred t@(TPred _)) = isIntValue $ t
+isIntValue TSucc { unsucc = TZero } = True
+isIntValue TPred { unpred = TZero } = True
+isIntValue TSucc { unsucc = t@TSucc {} } = isIntValue $ t
+isIntValue TPred { unpred = t@TPred {} } = isIntValue $ t
 isIntValue _ = False
 
 substitute :: Term -> Term -> Int -> Term
@@ -105,6 +106,9 @@ deduce _ _ = Nothing
 
 type TypeEnv = [Type]
 
+
+-- tests
+
 test :: (Eq a, Show a) => a -> a -> IO ()
 test actual expected = if actual == expected
                        then return ()
@@ -113,6 +117,10 @@ test actual expected = if actual == expected
                                            , "\nActual: "
                                            , show actual
                                            ]
+
+test' :: (Eq b, Show b) => (a -> b) -> [(a, b)] -> IO ()
+test' f xs = for_ xs $ \(t, r)->
+                 test (f t) r
 
 -- TAbsの型は適当
 testSubstitute :: IO ()
@@ -134,53 +142,52 @@ testSubstitute = test actual expected
           v5 = TIndex 5
 
 -- TAbsの型は適当
-testEvalStep :: [IO ()]
-testEvalStep = zipWith test (map trace term) expected
-    where term = [ TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
+testEvalStep :: IO ()
+testEvalStep = test' trace
+               [ ( TIf (TIf TTrue (TIf TFalse TTrue TFalse) TTrue)
                        (TSucc $ TSucc $ TPred TZero) $
                        TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
-                 , TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
-                 ]
-          expected = [ (True,
-                        [ TIf (TIf TFalse TTrue TFalse)
-                              (TSucc $ TSucc $ TPred TZero) $
-                              TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
-                        , TIf TFalse
-                              (TSucc $ TSucc $ TPred TZero) $
-                              TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
-                        , TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
-                        , TSucc $ TPred TZero
-                        , TZero
-                        ])
-                     , (True,
-                        [ TApply (TApply (TAbs (TAbs (TApply (TApply t $ TIndex 1) $ TIndex 0) TyAtom) TyAtom) TTrue) $ TPred $ TSucc TZero
-                        , TApply (TAbs (TApply (TApply t TTrue) $ TIndex 0) TyAtom) $ TPred $ TSucc TZero
-                        , TApply (TAbs (TApply (TApply t TTrue) $ TIndex 0) TyAtom) $ TZero
-                        , TApply (TApply t TTrue) TZero
-                        , TApply (TAbs TTrue TyAtom) TZero
-                        , TTrue
-                        ])
-                     ]
-          t = TAbs (TAbs (TIndex 1) TyAtom) TyAtom
+                 , ( True
+                   , [ TIf (TIf TFalse TTrue TFalse)
+                           (TSucc $ TSucc $ TPred TZero) $
+                           TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
+                     , TIf TFalse
+                           (TSucc $ TSucc $ TPred TZero) $
+                           TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
+                     , TApply (TAbs (TSucc $ TIndex 0) TyAtom) $ TPred TZero
+                     , TSucc $ TPred TZero
+                     , TZero
+                     ]))
+               , ( TApply (TApply (TApply tst t) TTrue) $ TPred $ TSucc TZero
+                 , (True
+                   , [ TApply (TApply (TAbs (TAbs (TApply (TApply t $ TIndex 1) $ TIndex 0) TyAtom) TyAtom) TTrue) $ TPred $ TSucc TZero
+                     , TApply (TAbs (TApply (TApply t TTrue) $ TIndex 0) TyAtom) $ TPred $ TSucc TZero
+                     , TApply (TAbs (TApply (TApply t TTrue) $ TIndex 0) TyAtom) $ TZero
+                     , TApply (TApply t TTrue) TZero
+                     , TApply (TAbs TTrue TyAtom) TZero
+                     , TTrue
+                     ]))
+               ]
+    where t = TAbs (TAbs (TIndex 1) TyAtom) TyAtom
           f = TAbs (TAbs (TIndex 0) TyAtom) TyAtom
           tst = TAbs (TAbs (TAbs (TApply (TApply (TIndex 2) $ TIndex 1) $ TIndex 0) TyAtom) TyAtom) TyAtom
 
 testDeduce :: IO ()
-testDeduce = sequence_ $ map (\(t, r)->test (deduce [] t) r)
-             [ (TApply (TApply (TAbs (TAbs (TIf (TIndex 1)
-                                                (TPred $ TSucc $ TZero)
-                                                (TApply (TAbs (TSucc $ TIndex 0)
-                                                              TyInt)
-                                                        (TIndex 0)))
-                                           TyInt)
-                                     TyBool)
-                               TFalse)
-                       (TSucc TZero)
+testDeduce = test' (deduce [])
+             [ ( TApply (TApply (TAbs (TAbs (TIf (TIndex 1)
+                                                 (TPred $ TSucc $ TZero)
+                                                 (TApply (TAbs (TSucc $ TIndex 0)
+                                                               TyInt)
+                                            (TIndex 0)))
+                                            TyInt)
+                                      TyBool)
+                                TFalse)
+                        (TSucc TZero)
                , Just TyInt)
              ]
 
 tests :: [IO ()]
-tests = testDeduce:testSubstitute:testEvalStep
+tests = testDeduce:testSubstitute:testEvalStep:[]
 
 main :: IO ()
 main = sequence_ $ tests

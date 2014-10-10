@@ -26,6 +26,7 @@ data Term = TTrue {}
           | TAbs { body :: Term, typeAnno :: Type }
           | TIndex { index :: Int }
           | TApply { func :: Term, arg :: Term }
+          | TAs { as :: Term, asAnno :: Type }
             deriving (Show, Eq)
 
 data Type = TyInt
@@ -56,6 +57,9 @@ instance System Term where
                                             | not $ isValue t2 = TApply t1 <$> evalStep t2
                                             | TAbs { body = t' } <- t1 = let t'' = substitute t' t2 0
                                                                          in Just $ shift t'' 1 (-1)
+    evalStep t@TAs { as = t' } | isValue t' = Just t'
+                               | otherwise = do t'' <- evalStep t'
+                                                return t { as = t'' }
     evalStep _ = Nothing
 
 isIntValue :: Term -> Bool
@@ -102,6 +106,8 @@ deduce e (TApply { func = t1, arg = t2 }) | Just (TyAbs ty1 ty2) <- deduce e t1
                                           , Just ty3 <- deduce e t2
                                           , ty1 == ty3 = Just ty2
 deduce e (TIndex { index = i }) | (ty:tys) <- drop i e = Just $ ty
+deduce e (TAs { as = t, asAnno = ty }) | ty' <- Just ty
+                                       , deduce e t == ty' = ty'
 deduce _ _ = Nothing
 
 type TypeEnv = [Type]
@@ -167,6 +173,11 @@ testEvalStep = test' trace
                      , TApply (TAbs TTrue TyAtom) TZero
                      , TTrue
                      ]))
+               , ( TAs (TApply (TAbs (TIndex 0) TyInt) (TSucc TZero)) TyAtom
+                 , (True
+                   , [ TAs (TSucc TZero) TyAtom
+                     , TSucc TZero
+                     ]))
                ]
     where t = TAbs (TAbs (TIndex 1) TyAtom) TyAtom
           f = TAbs (TAbs (TIndex 0) TyAtom) TyAtom
@@ -183,7 +194,11 @@ testDeduce = test' (deduce [])
                                       TyBool)
                                 TFalse)
                         (TSucc TZero)
-               , Just TyInt)
+               , Just TyInt
+               )
+             , ( TAs (TAbs (TAbs (TIsZero (TApply (TIndex 0) (TIndex 1))) (TyAbs TyInt TyInt)) TyInt) (TyAbs TyInt $ TyAbs (TyAbs TyInt TyInt) TyBool)
+               , Just $ TyAbs TyInt $ TyAbs (TyAbs TyInt TyInt) TyBool
+               )
              ]
 
 tests :: [IO ()]

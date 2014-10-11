@@ -27,12 +27,15 @@ data Term = TTrue {}
           | TIndex { index :: Int }
           | TApply { func :: Term, arg :: Term }
           | TAs { as :: Term, asAnno :: Type }
+          | TTuple { terms :: [Term], values :: [Term] }
+          | TTupProj { tuple :: Term, projIndex :: Int }
             deriving (Show, Eq)
 
 data Type = TyInt
           | TyBool
           | TyAbs Type Type
           | TyAtom
+          | TyTuple [Type]
             deriving (Show, Eq)
 
 instance System Term where
@@ -42,6 +45,7 @@ instance System Term where
     isValue t@TSucc {} = isIntValue t
     isValue t@TPred {} = isIntValue t
     isValue TAbs {} = True
+    isValue TTuple { terms = [] } = True
     isValue _ = False
     evalStep TIf { cond = TTrue, true = t } = Just t
     evalStep TIf { cond = TFalse, false = t } = Just t
@@ -60,6 +64,13 @@ instance System Term where
     evalStep t@TAs { as = t' } | isValue t' = Just t'
                                | otherwise = do t'' <- evalStep t'
                                                 return t { as = t'' }
+    evalStep t@TTuple { terms = t':ts', values = vs } = do t'' <- evalStep t'
+                                                           return $ if not $ isValue t''
+                                                                    then t { terms = t'':ts' }
+                                                                    else t { terms = ts', values = (if null ts' then reverse else id) $ t'':vs }
+    evalStep t@TTupProj { tuple = tup, projIndex = i } | not $ isValue tup = do tup' <- evalStep tup
+                                                                                return t { tuple = tup', projIndex = i }
+                                                       | t':[] <- drop i $ values tup = Just t'
     evalStep _ = Nothing
 
 isIntValue :: Term -> Bool
@@ -108,6 +119,11 @@ deduce e (TApply { func = t1, arg = t2 }) | Just (TyAbs ty1 ty2) <- deduce e t1
 deduce e (TIndex { index = i }) | (ty:tys) <- drop i e = Just $ ty
 deduce e (TAs { as = t, asAnno = ty }) | ty' <- Just ty
                                        , deduce e t == ty' = ty'
+deduce e (TTuple { terms = ts, values = vs }) | d <- deduce e
+                                              , Just types1 <- sequence $ map d ts
+                                              , Just types2 <- sequence $ map d $ reverse vs = Just $ TyTuple $ types2 ++ types1
+deduce e (TTupProj { tuple = tup, projIndex = i }) | Just (TyTuple types) <- deduce e tup
+                                                   , ty:tys <- drop i types = Just ty
 deduce _ _ = Nothing
 
 type TypeEnv = [Type]
@@ -178,6 +194,41 @@ testEvalStep = test' trace
                    , [ TAs (TSucc TZero) TyAtom
                      , TSucc TZero
                      ]))
+               , ( TTupProj (TIf TTrue
+                                 (TTuple [ TIsZero $ TSucc TZero
+                                         , TIsZero $ TSucc TZero
+                                         , TIsZero $ TPred $ TSucc TZero
+                                         ]
+                                         [])
+                                 TZero) 2
+                 , (True
+                   , [ TTupProj (TTuple [ TIsZero $ TSucc TZero
+                                        , TIsZero $ TSucc TZero
+                                        , TIsZero $ TPred $ TSucc TZero
+                                        ]
+                                        []) 2
+                     , TTupProj (TTuple [ TIsZero $ TSucc TZero
+                                        , TIsZero $ TPred $ TSucc TZero
+                                        ]
+                                        [ TFalse
+                                        ]) 2
+                     , TTupProj (TTuple [ TIsZero $ TPred $ TSucc TZero
+                                        ]
+                                        [ TFalse
+                                        , TFalse
+                                        ]) 2
+                     , TTupProj (TTuple [ TIsZero TZero
+                                        ]
+                                        [ TFalse
+                                        , TFalse
+                                        ]) 2
+                     , TTupProj (TTuple []
+                                        [ TFalse
+                                        , TFalse
+                                        , TTrue
+                                        ]) 2
+                     , TTrue
+                   ]))
                ]
     where t = TAbs (TAbs (TIndex 1) TyAtom) TyAtom
           f = TAbs (TAbs (TIndex 0) TyAtom) TyAtom
@@ -198,6 +249,9 @@ testDeduce = test' (deduce [])
                )
              , ( TAs (TAbs (TAbs (TIsZero (TApply (TIndex 0) (TIndex 1))) (TyAbs TyInt TyInt)) TyInt) (TyAbs TyInt $ TyAbs (TyAbs TyInt TyInt) TyBool)
                , Just $ TyAbs TyInt $ TyAbs (TyAbs TyInt TyInt) TyBool
+               )
+             , ( TApply (TAbs (TTupProj (TTuple { terms = [TTrue, TFalse, TSucc $ TPred $ (TIndex 0)], values = [] }) 2) TyInt) $ TZero
+               , Just TyInt
                )
              ]
 

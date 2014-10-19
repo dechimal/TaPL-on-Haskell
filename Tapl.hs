@@ -29,6 +29,7 @@ data Term = TTrue {}
           | TAs { as :: Term, asAnno :: Type }
           | TTuple { terms :: [Term], values :: [Term] }
           | TTupProj { tuple :: Term, projIndex :: Int }
+          | TLet { letVar :: Term, letBody :: Term }
             deriving (Show, Eq)
 
 data Type = TyInt
@@ -64,13 +65,18 @@ instance System Term where
     evalStep t@TAs { as = t' } | isValue t' = Just t'
                                | otherwise = do t'' <- evalStep t'
                                                 return t { as = t'' }
-    evalStep t@TTuple { terms = t':ts', values = vs } = do t'' <- evalStep t'
-                                                           return $ if not $ isValue t''
-                                                                    then t { terms = t'':ts' }
-                                                                    else t { terms = ts', values = (if null ts' then reverse else id) $ t'':vs }
+    evalStep t@TTuple { terms = t':ts', values = vs } = let f x | isValue x = t { terms = ts', values = (if null ts' then reverse else id) $ x:vs }
+                                                                | otherwise = t { terms = x:ts' }
+                                                        in if isValue t'
+                                                           then return $ f t'
+                                                           else evalStep t' >>= return . f
     evalStep t@TTupProj { tuple = tup, projIndex = i } | not $ isValue tup = do tup' <- evalStep tup
                                                                                 return t { tuple = tup', projIndex = i }
                                                        | t':[] <- drop i $ values tup = Just t'
+    evalStep t@TLet { letVar = v, letBody = b } | not $ isValue v = do v' <- evalStep v
+                                                                       return t { letVar = v' }
+                                                | otherwise = let b' = substitute b v 0
+                                                              in Just $ shift b' 1 (-1)
     evalStep _ = Nothing
 
 isIntValue :: Term -> Bool
@@ -89,6 +95,9 @@ substitute (TSucc { unsucc = n }) t2 i = TSucc $ substitute n t2 i
 substitute (TPred { unpred = n }) t2 i = TPred $ substitute n t2 i
 substitute (TIsZero { zero = n }) t2 i = TIsZero $ substitute n t2 i
 substitute (TApply { func = t3, arg = t4 }) t2 i = TApply (substitute t3 t2 i) (substitute t4 t2 i)
+substitute t@(TTuple { terms = ts, values = vs }) t2 i = let f t = substitute t t2 i in t { terms = map f ts, values = map f vs }
+substitute t@(TTupProj { tuple = tup }) t2 i = t { tuple = substitute tup t2 i }
+substitute t@(TLet { letVar = v, letBody = b }) t2 i = t { letVar = substitute v t2 i, letBody = substitute b (shift t2 1 1) (i+1) }
 substitute t1 _ _ = t1
 
 shift :: Term -> Int -> Int -> Term
@@ -124,6 +133,7 @@ deduce e (TTuple { terms = ts, values = vs }) | d <- deduce e
                                               , Just types2 <- sequence $ map d $ reverse vs = Just $ TyTuple $ types2 ++ types1
 deduce e (TTupProj { tuple = tup, projIndex = i }) | Just (TyTuple types) <- deduce e tup
                                                    , ty:tys <- drop i types = Just ty
+deduce e (TLet { letVar = v, letBody = b }) | Just ty <- deduce e v = deduce (ty:e) b
 deduce _ _ = Nothing
 
 type TypeEnv = [Type]
@@ -228,11 +238,24 @@ testEvalStep = test' trace
                                         , TTrue
                                         ]) 2
                      , TTrue
-                   ]))
+                     ]))
+               , ( testDataLet
+                 , (True
+                   , [ TApply (TAbs (TLet (TTupProj (TIndex 0) 1) (TTuple [TIndex 0, TSucc TZero, TIndex 1] [])) $ TyTuple [TyBool, TyBool]) (TTuple [TTrue] [TFalse])
+                     , TApply (TAbs (TLet (TTupProj (TIndex 0) 1) (TTuple [TIndex 0, TSucc TZero, TIndex 1] [])) $ TyTuple [TyBool, TyBool]) (TTuple [] [TFalse, TTrue])
+                     , TLet (TTupProj (TTuple [] [TFalse, TTrue]) 1) (TTuple [TIndex 0, TSucc TZero, TTuple [] [TFalse, TTrue]] [])
+                     , TLet TTrue (TTuple [TIndex 0, TSucc TZero, TTuple [] [TFalse, TTrue]] [])
+                     , TTuple [TTrue, TSucc TZero, TTuple [] [TFalse, TTrue]] []
+                     , TTuple [TSucc TZero, TTuple [] [TFalse, TTrue]] [TTrue]
+                     , TTuple [TTuple [] [TFalse, TTrue]] [TSucc TZero, TTrue]
+                     , TTuple [] [TTrue, TSucc TZero, TTuple [] [TFalse, TTrue]]
+                     ]))
                ]
     where t = TAbs (TAbs (TIndex 1) TyAtom) TyAtom
           f = TAbs (TAbs (TIndex 0) TyAtom) TyAtom
           tst = TAbs (TAbs (TAbs (TApply (TApply (TIndex 2) $ TIndex 1) $ TIndex 0) TyAtom) TyAtom) TyAtom
+
+testDataLet = TApply (TAbs (TLet (TTupProj (TIndex 0) 1) (TTuple [TIndex 0, TSucc TZero, TIndex 1] [])) $ TyTuple [TyBool, TyBool]) (TTuple [TFalse, TTrue] [])
 
 testDeduce :: IO ()
 testDeduce = test' (deduce [])
@@ -252,6 +275,9 @@ testDeduce = test' (deduce [])
                )
              , ( TApply (TAbs (TTupProj (TTuple { terms = [TTrue, TFalse, TSucc $ TPred $ (TIndex 0)], values = [] }) 2) TyInt) $ TZero
                , Just TyInt
+               )
+             , ( testDataLet
+               , Just $ TyTuple [TyBool, TyInt, TyTuple [TyBool, TyBool]]
                )
              ]
 
